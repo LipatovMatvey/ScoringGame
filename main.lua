@@ -30,6 +30,12 @@ local ground = nil
 local canJump = true
 local gameOverlay = nil
 
+-- Бесконечный фон
+local background = nil
+local background2 = nil
+local bgTimer = nil
+local scrollSpeed = 150   -- скорость прокрутки (пикселей/сек)
+
 -- Флаг, чтобы победа не срабатывала дважды
 local winTriggered = false
 
@@ -109,31 +115,37 @@ end
 
 -- 2. Мигание машины при получении урона (безопасная версия)
 local function flashPlayer()
+    -- if not player then return end
+    -- local body = player[1] -- первый дочерний элемент — кузов
+    -- if not body or not body.setFillColor then return end
+    -- local originalColor = { 0, 0.5, 1 }
+    -- local count = 0
+    -- local flashTimer
+    -- local function flashStep()
+    --     -- Проверяем, что объекты всё ещё существуют и игра активна
+    --     if not player or not body or not body.setFillColor or not isGameActive then
+    --         if flashTimer then timer.cancel(flashTimer) end
+    --         return
+    --     end
+    --     count = count + 1
+    --     if count % 2 == 1 then
+    --         body:setFillColor(1, 0, 0)  -- красный
+    --     else
+    --         body:setFillColor(unpack(originalColor))
+    --     end
+    --     if count < 6 then
+    --         flashTimer = timer.performWithDelay(100, flashStep)
+    --     else
+    --         body:setFillColor(unpack(originalColor))
+    --     end
+    -- end
+    -- flashStep()
     if not player then return end
-    local body = player[1] -- первый дочерний элемент — кузов
-    if not body or not body.setFillColor then return end
-    local originalColor = { 0, 0.5, 1 }
-    local count = 0
-    local flashTimer
-    local function flashStep()
-        -- Проверяем, что объекты всё ещё существуют и игра активна
-        if not player or not body or not body.setFillColor or not isGameActive then
-            if flashTimer then timer.cancel(flashTimer) end
-            return
-        end
-        count = count + 1
-        if count % 2 == 1 then
-            body:setFillColor(1, 0, 0)  -- красный
-        else
-            body:setFillColor(unpack(originalColor))
-        end
-        if count < 6 then
-            flashTimer = timer.performWithDelay(100, flashStep)
-        else
-            body:setFillColor(unpack(originalColor))
-        end
-    end
-    flashStep()
+    local originalAlpha = player.alpha
+    transition.to(player, { time = 100, alpha = 0.5 })
+    transition.to(player, { time = 100, alpha = originalAlpha, delay = 100 })
+    transition.to(player, { time = 100, alpha = 0.5, delay = 200 })
+    transition.to(player, { time = 100, alpha = originalAlpha, delay = 300 })
 end
 
 -- 3. Парящий текст "+1"
@@ -164,6 +176,72 @@ local function animateJump()
     end)
 end
 
+-- ========== БЕСКОНЕЧНЫЙ ФОН ==========
+local function createScrollingBackground()
+    if background then return end  -- если фон уже есть, не создаём повторно
+    -- Удаляем старый фон, если есть (на всякий случай)
+    if background then background:removeSelf() end
+    if background2 then background2:removeSelf() end
+    if bgTimer then timer.cancel(bgTimer) end
+
+    local screenW = display.contentWidth
+    local screenH = display.contentHeight
+
+    -- Создаём две копии фона, растянутые на весь экран
+    background = display.newImageRect("FOTO/FonLvl.png", screenW, screenH)
+    background.anchorX = 0
+    background.x = 0
+    -- Выравниваем фон по нижнему краю экрана (чтобы дорога совпадала с землёй)
+    background.y = display.contentHeight - background.height + 375
+    background:toBack()
+
+    background2 = display.newImageRect("FOTO/FonLvl.png", screenW, screenH)
+    background2.anchorX = 0
+    background2.x = screenW   -- ставим вторую копию справа от первой
+    background2.y = display.contentHeight - background2.height + 375
+    background2:toBack()
+
+    if gameGroup then
+        gameGroup:insert(background)
+        gameGroup:insert(background2)
+    end
+
+    -- Таймер анимации прокрутки
+    bgTimer = timer.performWithDelay(16, function()
+        if not isGameActive or not background or not background2 then return end
+        background.x = background.x - scrollSpeed * 0.016
+        background2.x = background2.x - scrollSpeed * 0.016
+
+        -- Бесконечная прокрутка: если картинка ушла влево, переносим её вправо
+        if background.x + background.width < 0 then
+            background.x = background2.x + background2.width
+        end
+        if background2.x + background2.width < 0 then
+            background2.x = background.x + background.width
+        end
+    end, 0)
+    table.insert(gameTimers, bgTimer)
+end
+
+-- ========== ОБЩАЯ ЗЕМЛЯ И ИГРОК ==========
+local function createGroundAndPlayer()
+    ground = display.newRect(display.contentCenterX, display.contentHeight-50, display.contentWidth, 20)
+    ground:setFillColor(0.4,0.4,0.4)
+    ground.anchorY = 0
+    ground.y = display.contentHeight-50
+    physics.addBody(ground, "static", { friction=1 })
+    ground.ID = "ground"
+    
+    player = display.newImageRect("FOTO/car1.png", 140, 75)
+    player.x, player.y = 100, ground.y - 15
+    player.ID = "player"
+    physics.addBody(player, "dynamic", { density=1, friction=0.5, bounce=0.2 })
+    player.isFixedRotation = true
+    
+    gameGroup:insert(ground)
+    gameGroup:insert(player)
+end
+
 -- ========== ОСНОВНЫЕ ФУНКЦИИ ==========
 
 local function clearGame()
@@ -178,6 +256,9 @@ local function clearGame()
     if player and player.removeSelf then player:removeSelf() end
     player = nil
     ground = nil
+    if background then background:removeSelf(); background = nil end
+    if background2 then background2:removeSelf(); background2 = nil end
+    if bgTimer then timer.cancel(bgTimer); bgTimer = nil end
 end
 
 local function showMessage(text, isWin, onComplete)
@@ -233,41 +314,10 @@ local function tryWin()
     return false
 end
 
--- --- УРОВЕНЬ 1 ---
-local function createGameLevel1()
-    ground = display.newRect(display.contentCenterX, display.contentHeight-50, display.contentWidth, 20)
-    ground:setFillColor(0.4,0.4,0.4)
-    ground.anchorY = 0
-    ground.y = display.contentHeight-50
-    physics.addBody(ground, "static", { friction=1 })
-    ground.ID = "ground"
-    
-    player = display.newGroup()
-    local body = display.newRect(0, 0, 60, 30)
-    body:setFillColor(0,0.5,1)
-    player:insert(body)
-    local wheel1 = display.newCircle(15, 15, 10)
-    wheel1:setFillColor(0,0,0)
-    local wheel2 = display.newCircle(45, 15, 10)
-    wheel2:setFillColor(0,0,0)
-    player:insert(wheel1)
-    player:insert(wheel2)
-    player.x, player.y = 100, ground.y - 15
-    physics.addBody(player, "dynamic", { density=1, friction=0.5, bounce=0.2 })
-    player.isFixedRotation = true
-    player.ID = "player"
-    
-    local function animateWheels()
-        if not player or not isGameActive then return end
-        wheel1.rotation = (wheel1.rotation or 0) + 10
-        wheel2.rotation = (wheel2.rotation or 0) + 10
-        timer.performWithDelay(50, animateWheels, 1)
-    end
-    animateWheels()
-    
-    gameGroup:insert(ground)
-    gameGroup:insert(player)
-    
+-- ========== ЛОГИКА УРОВНЕЙ ==========
+
+-- Уровень 1: только дружественные объекты (зелёные)
+local function startLevel1Spawning()
     local function spawnFriendly()
         if not isGameActive or not ground then return end
         local friendly = display.newRect(display.contentWidth, ground.y - 20, 40, 40)
@@ -294,14 +344,8 @@ local function createGameLevel1()
     table.insert(gameTimers, spawnTimer)
 end
 
--- --- УРОВЕНЬ 2 ---
-local function createGameLevel2()
-    createGameLevel1()
-    for _,t in ipairs(gameTimers) do 
-        if t then timer.cancel(t) end
-    end
-    gameTimers = {}
-    
+-- Уровень 2: смесь друзей и врагов (красные и зелёные)
+local function startLevel2Spawning()
     local function spawnMixed()
         if not isGameActive or not ground then return end
         local isBandit = (math.random() > 0.5)
@@ -318,18 +362,19 @@ local function createGameLevel2()
         gameGroup:insert(obj)
         table.insert(gameObjects, obj)
     end
+    
     local spawnTimer = timer.performWithDelay(2000, spawnMixed, 0)
     table.insert(gameTimers, spawnTimer)
 end
 
--- --- УРОВЕНЬ 3 (стрельба) ---
+-- Уровень 3: смесь + стрельба
 local bullets = {}
 local enemyBullets = {}
 local shootButton = nil
 
-local function createGameLevel3()
-    createGameLevel2()
-    
+local function startLevel3Features()
+    -- Добавляем кнопку стрельбы
+    local bulletY = ground.y - 20
     shootButton = widget.newButton{
         label = "Огонь",
         x = display.contentWidth - 80,
@@ -338,8 +383,8 @@ local function createGameLevel3()
         onPress = function()
             if not isGameActive or not player then return end
             playSound(shootSound)
-            local bullet = display.newCircle(player.x + 30, player.y, 8)
-            bullet:setFillColor(1,1,0)
+            local bullet = display.newImageRect("FOTO/bullet.png", 50, 24)
+            bullet.x, bullet.y = player.x + 30, ground.y - 20
             bullet.ID = "playerBullet"
             physics.addBody(bullet, "dynamic", { isSensor=true })
             bullet.gravityScale = 0
@@ -353,12 +398,13 @@ local function createGameLevel3()
     }
     gameGroup:insert(shootButton)
     
+    -- Враги стреляют
     local function enemyShoot(bandit)
         if not isGameActive or not bandit or not bandit.x or bandit.x < 0 then
             return
         end
-        local ebullet = display.newCircle(bandit.x - 20, bandit.y, 6)
-        ebullet:setFillColor(1,0.5,0)
+        local ebullet = display.newImageRect("FOTO/bullet2.png", 50, 24)
+        ebullet.x, ebullet.y = bandit.x - 20, ground.y - 20
         ebullet.ID = "enemyBullet"
         physics.addBody(ebullet, "dynamic", { isSensor=true })
         ebullet.gravityScale = 0
@@ -382,6 +428,21 @@ local function createGameLevel3()
     end
     local checkTimer = timer.performWithDelay(500, addShootToBandit, 0)
     table.insert(gameTimers, checkTimer)
+end
+
+-- Инициализация уровня (общая для всех)
+local function initLevel(level)
+    createScrollingBackground()
+    createGroundAndPlayer()
+    
+    if level == 1 then
+        startLevel1Spawning()
+    elseif level == 2 then
+        startLevel2Spawning()
+    elseif level == 3 then
+        startLevel2Spawning()   -- сначала спавн смеси
+        startLevel3Features()   -- потом добавляем стрельбу
+    end
 end
 
 -- --- ОБРАБОТКА СТОЛКНОВЕНИЙ (С АНИМАЦИЯМИ) ---
@@ -492,13 +553,13 @@ local function startGame(level)
     gameGroup = display.newGroup()
     
     gameOverlay = display.newGroup()
-    local bgBar = display.newRect(0, 0, display.contentWidth, 50)
+    local bgBar = display.newRect(0, 0, 2500, 60)
     bgBar:setFillColor(0,0,0,0.6)
     gameOverlay:insert(bgBar)
-    local livesText = display.newText("Жизни: " .. lives, 20, 20, native.systemFont, 25)
+    local livesText = display.newText("Жизни: " .. lives, 80, 20, native.systemFont, 25)
     livesText:setFillColor(1,1,1)
     gameOverlay:insert(livesText)
-    local scoreText = display.newText("Очки: " .. score, 150, 20, native.systemFont, 25)
+    local scoreText = display.newText("Очки: " .. score, 220, 20, native.systemFont, 25)
     scoreText:setFillColor(1,1,1)
     gameOverlay:insert(scoreText)
     local timerText = display.newText("Время: " .. timeLeft, display.contentWidth-120, 20, native.systemFont, 25)
@@ -509,9 +570,12 @@ local function startGame(level)
     gameOverlay.timerText = timerText
     gameGroup:insert(gameOverlay)
     
-    if level == 1 then createGameLevel1()
-    elseif level == 2 then createGameLevel2()
-    elseif level == 3 then createGameLevel3() end
+    -- Инициализируем уровень (фон, земля, игрок, спавн)
+    initLevel(level)
+    
+    -- Убедимся, что фон позади всего (Z-порядок)
+    if background then background:toBack() end
+    if background2 then background2:toBack() end
     
     -- Таймер для всех уровней
     local timeExpired = false
