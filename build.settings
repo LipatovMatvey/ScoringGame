@@ -5,6 +5,12 @@
 
 settings =
 {
+	window =
+	{
+		--defaultWidth = 1024,
+		--defaultHeight = 768,
+	},
+
 	orientation =
 	{
 		-- Supported values for orientation:
